@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+    <head>
+        <meta charset="utf-8">
+        <title>gemot II</title>
+        <style>* {padding: 0; margin: 0}</style>
+        
+        <script src="src/pixi.min.js"></script>
+        <script src="src/pixiGeometryHelpers.js"></script>
+        <script src="src/mic2.js"></script>
+        <script src="src/stats.min.js"></script>
+        
+    </head>
+    
+    <body>
+        <script>
+            var w = window.innerWidth
+            var h = window.innerHeight;
+            window.addEventListener("resize", function(event){ 
+                renderer.resize(window.innerWidth, window.innerHeight);
+                w = window.innerWidth;
+                h = window.innerHeight;
+            });
+            
+            function getreqfullscreen(){
+                var root = document.documentElement
+                return root.requestFullscreen || root.webkitRequestFullscreen || root.mozRequestFullScreen || root.msRequestFullscreen
+            }
+
+            window.addEventListener('dblclick', function(){ 
+                var globalreqfullscreen = getreqfullscreen();
+                globalreqfullscreen.call(document.documentElement);
+            });
+            
+            //stats
+            var stats = new Stats();
+            stats.showPanel( 0 );
+            document.body.appendChild( stats.dom );
+            
+            //pixi renderer setup
+            var renderer = PIXI.autoDetectRenderer();
+            renderer.autoResize = true;
+            renderer.resize(window.innerWidth, window.innerHeight);
+            renderer.resolution = devicePixelRatio;
+            renderer.view.style.position = "absolute";
+            renderer.view.style.display = "block";
+            renderer.antialias = false;
+            //renderer.clearBeforeRender = false;
+            document.body.appendChild(renderer.view);
+            
+            //pixi stage setup
+            var stage = new PIXI.Container();
+            
+            //render textures for clearing the display with ghosts
+            var renderTexture = new PIXI.RenderTexture(renderer, renderer.width, renderer.height);
+            var renderTexture2 = new PIXI.RenderTexture(renderer, renderer.width, renderer.height);
+            var outputSprite = new PIXI.Sprite(renderTexture);
+            stage.addChild(outputSprite);
+            
+            //GLOBAL VARIABLES
+            //mic
+            var mic = new Microphone(256);
+            var volume, peak_volume;
+            
+            //number of lines of symmetry
+            var symmetry_num = 8;
+
+            //particles
+            var particles = [];
+            var num_particles = 128;
+            var radius = h / 3;
+            var max_distance = 0;
+            var explode = 1;
+            
+            //colors
+            var line_color = 0xffffff;
+            updateLineColor(line_color);
+            var line_width = 1;
+            updateLineWidth(line_width);
+            
+            //ghosts
+            var background = new PIXI.Graphics();
+            var bg_opacity = 0.1;
+            var bg_color = 0x000000;
+            drawBackground();
+            background.cacheAsBitmap = true;
+            stage.addChild(background);
+            
+            initGeometry();
+            animate();
+            
+            function initGeometry() {
+                //add a number of particles to particles
+                for (i = 0; i < num_particles; i++) {
+                    addParticle(i);
+                }
+
+                function addParticle(_i) {
+                    var _angle = radians(distributeAngles(i, num_particles)) + 0.025;
+                    var particle = {
+                        x: 0,
+                        y: 0,
+                        angle: _angle,
+                        radius: radius,
+                    }
+                    particles.push(particle);
+                }
+            }
+            
+            function drawBackground() {
+                //bg_opacity = map(volume, 0, 100, 1, 0.01);
+                background.beginFill(bg_color, bg_opacity);
+                background.drawRect(0, 0, renderer.width, renderer.height);
+                background.endFill();
+            }
+            
+            function drawParticles() {
+                for (j = 0; j < symmetry_num; j++) {
+                    for (i = 0; i < num_particles / symmetry_num; i++) {
+                        var particle_id = (num_particles / symmetry_num) * j;
+                        waveform = mic.mapWaveform(i, num_particles / symmetry_num, 1, h / 2);
+
+                        if (j % 2 == 0) {
+                            particle = particle_id + (num_particles / symmetry_num) - i - 1;
+                            p = particles[particle];
+                        } else {
+                            particle = particle_id + i;
+                            p = particles[particle];
+                        }
+
+                        p.x = w/2 + Math.cos(p.angle) * (p.radius * waveform) * explode;
+                        p.y = h/2 + Math.sin(p.angle) * (p.radius * waveform) * explode;
+                    }
+                }
+            }
+            
+            function drawLines() {
+                max_distance = map(mic.volume, 0, 100, 0, h / 120) ** 2 * explode;
+                for (i = 0; i < num_particles; i++) {
+                    for (j = 0; j < num_particles; j++) {
+                        p1 = particles[i];
+                        p2 = particles[j];
+
+                        //check distances, draw line between them if they're close
+                        current_distance = (dist(p1.x, p1.y, p2.x, p2.y));
+
+                        if (current_distance <= max_distance) {
+                            drawLine(p1.x, p1.y, p2.x, p2.y);
+                        }
+                    }
+                }
+            }
+            
+            function updateSymmetry() {
+                if (volume < peak_vol - 50) {
+                    symmetry_num = 4;
+                    explode = 1;
+                } else if (volume < peak_vol - 35) {
+                    symmetry_num = 8;
+                    explode = 1;
+                } else if (volume > peak_vol - 20) {
+                    symmetry_num = 16;
+                    explode = 1.5;
+                }
+            }
+            
+            function animate() {
+                stats.begin();
+                requestAnimationFrame(animate);
+                volume = mic.volume;
+                peak_vol = mic.peak_volume;
+                
+                
+                //drawBackground();
+                updateSymmetry();
+                drawParticles();
+                drawLines();
+                
+                //render background ghosts
+                var temp = renderTexture;
+                renderTexture = renderTexture2;
+                renderTexture2 = temp;
+                outputSprite.texture = renderTexture
+                renderer.render(stage, renderTexture2);
+                
+                //render the scene
+                renderer.render(stage);
+                
+                //clear geometries
+                clearLines();
+                stats.end();
+            }
+            
+        </script>
+    </body>
+</html>
